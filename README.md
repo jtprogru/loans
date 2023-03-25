@@ -1,2 +1,3 @@
 # loans
-Simple CLI application written with Golang for accounting loans
+
+Консольное приложение для учета денег, выданных в долг под проценты.
