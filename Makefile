@@ -50,18 +50,19 @@ clean:
 .PHONY: test
 ## Run all test
 test:
-	go test --short -coverprofile=cover.out -v ./...
-	make test.coverage
+	$(SYS_GO) test -coverpkg=./... -coverprofile=cover.out ./...
+	$(MAKE) test.coverage
 
 .PHONY: test.coverage
-## Run test coverage
+## Report whole-module statement coverage and enforce the 90% minimum
 test.coverage:
-	go tool cover -func=cover.out
+	$(SYS_GO) tool cover -func=cover.out
+	awk 'NR > 1 { size[$$1]=$$2; if ($$3) hit[$$1]=1 } END { for (b in size) { total+=size[b]; covered+=size[b]*hit[b] }; if (!total || 100*covered < 90*total) { print "Statement coverage below 90%"; exit 1 } }' cover.out
 
 .PHONY: lint
 ## Run golangci-lint
 lint:
-	golangci-lint -v run --out-format=colored-line-number
+	golangci-lint run ./...
 
 .PHONY: help
 ## Show this help message
