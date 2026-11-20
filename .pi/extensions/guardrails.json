@@ -1,0 +1,20 @@
+{
+  "$schema": "https://unpkg.com/@aliou/pi-guardrails@0.24.0/schema.json",
+  "pathAccess": {
+    "allowedPaths": [
+      {
+        "kind": "directory",
+        "path": "~/go/pkg/mod/modernc.org/sqlite@v1.57.0"
+      },
+      {
+        "kind": "directory",
+        "path": "~/go/pkg/mod/github.com/charmbracelet/x/ansi@v0.11.6"
+      },
+      {
+        "kind": "directory",
+        "path": "~/go/pkg/mod/github.com/adrg/xdg@v0.5.3"
+      }
+    ]
+  },
+  "version": "0.24.0"
+}
