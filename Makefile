@@ -8,13 +8,14 @@ export SYS_GO=$(shell which go)
 export SYS_GOFMT=$(shell which gofmt)
 
 export BINARY_DIR=dist
-export BINARY_NAME=loans-manager
+export BINARY_NAME=loans
+VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
 
 
 .PHONY: run.cmd
-## Run as go run main.go
-run.cmd: main.go
-	$(SYS_GO) run main.go
+## Run as go run ./cmd/loans
+run.cmd:
+	$(SYS_GO) run ./cmd/loans
 
 .PHONY: run.bin
 ## Run as binary
@@ -28,8 +29,8 @@ install-deps: go.mod
 
 .PHONY: build.bin
 ## Build bin file from go
-build.bin: main.go
-	$(SYS_GO) mod download && CGO_ENABLED=0 $(SYS_GO) build -o ./$(BINARY_DIR)/$(BINARY_NAME) main.go
+build.bin:
+	CGO_ENABLED=0 $(SYS_GO) build -ldflags "-X main.version=$(VERSION)" -o ./$(BINARY_DIR)/$(BINARY_NAME) ./cmd/loans
 
 .PHONY: fmt
 ## Run go fmt
