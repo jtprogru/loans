@@ -13,6 +13,10 @@
       {
         "kind": "directory",
         "path": "~/go/pkg/mod/github.com/adrg/xdg@v0.5.3"
+      },
+      {
+        "kind": "directory",
+        "path": "~/.codex/.bear-skills/rules"
       }
     ]
   },

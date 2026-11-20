@@ -1,107 +1,75 @@
-#!make
+# loans — local development entrypoint. Keep compatible with GNU Make 3.81 (macOS).
 SHELL := /bin/bash
-.SILENT:
+MAKEFLAGS += --no-print-directory
 .DEFAULT_GOAL := help
 
-# Global vars
-export SYS_GO=$(shell which go)
-export SYS_GOFMT=$(shell which gofmt)
+GO            ?= go
+GOFMT         ?= gofmt
+GOLANGCI_LINT ?= golangci-lint
+GOVULNCHECK   ?= govulncheck
+BINARY_NAME   ?= loans
+DIST_DIR      ?= dist
+VERSION       ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+COVERPROFILE  ?= cover.out
 
-export BINARY_DIR=dist
-export BINARY_NAME=loans
-VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+MAIN_PACKAGE := ./cmd/loans
+BINARY       := $(abspath $(DIST_DIR))/$(BINARY_NAME)
+LDFLAGS       = -X main.version=$(VERSION)
 
+# --- meta -------------------------------------------------------------------
 
-.PHONY: run.cmd
-## Run as go run ./cmd/loans
-run.cmd:
-	$(SYS_GO) run ./cmd/loans
+help: ## Show available targets
+	@awk 'BEGIN { FS = ":.*## "; print "Usage: make <target>\n" } \
+		/^[a-zA-Z0-9_.-]+:.*## / { printf "  %-15s %s\n", $$1, $$2 }' $(MAKEFILE_LIST)
 
-.PHONY: run.bin
-## Run as binary
-run.bin: build.bin
-	./$(BINARY_DIR)/$(BINARY_NAME)
+# --- build ------------------------------------------------------------------
 
-.PHONY: install-deps
-## Install all requirements
-install-deps: go.mod
-	$(SYS_GO) mod tidy
+run: ## Run from source, e.g. make run ARGS="--help"
+	$(GO) run -ldflags "$(LDFLAGS)" $(MAIN_PACKAGE) $(ARGS)
 
-.PHONY: build.bin
-## Build bin file from go
-build.bin:
-	CGO_ENABLED=0 $(SYS_GO) build -ldflags "-X main.version=$(VERSION)" -o ./$(BINARY_DIR)/$(BINARY_NAME) ./cmd/loans
+build: ## Build the standalone binary into ./dist
+	CGO_ENABLED=0 $(GO) build -ldflags "$(LDFLAGS)" -o "$(BINARY)" $(MAIN_PACKAGE)
 
-.PHONY: fmt
-## Run go fmt
-fmt:
-	$(SYS_GOFMT) -s -w .
+install: ## Install loans with go install
+	CGO_ENABLED=0 $(GO) install -ldflags "$(LDFLAGS)" $(MAIN_PACKAGE)
 
-.PHONY: vet
-## Run go vet ./...
-vet:
-	$(SYS_GO) vet ./...
+tidy: ## Tidy module dependencies
+	$(GO) mod tidy
 
-.PHONY: clean
-## Clean all artifacts
-clean:
-	rm -rf $(BINARY_DIR)
+fmt: ## Format Go sources
+	$(GOFMT) -s -w .
 
-.PHONY: test
-## Run all test
-test:
-	$(SYS_GO) test -coverpkg=./... -coverprofile=cover.out ./...
-	$(MAKE) test.coverage
+vet: ## Run go vet on all packages
+	$(GO) vet ./...
 
-.PHONY: test.coverage
-## Report whole-module statement coverage and enforce the 90% minimum
-test.coverage:
-	$(SYS_GO) tool cover -func=cover.out
-	awk 'NR > 1 { size[$$1]=$$2; if ($$3) hit[$$1]=1 } END { for (b in size) { total+=size[b]; covered+=size[b]*hit[b] }; if (!total || 100*covered < 90*total) { print "Statement coverage below 90%"; exit 1 } }' cover.out
+# --- test / lint ------------------------------------------------------------
 
-.PHONY: lint
-## Run golangci-lint
-lint:
-	golangci-lint run ./...
+test: ## Run all tests and enforce 90% whole-module statement coverage
+test-race: ## Run the same tests and coverage check with the race detector
+test-race: RACE_FLAG := -race
+test test-race:
+	$(GO) test $(RACE_FLAG) $(GOTEST_FLAGS) -coverpkg=./... -coverprofile="$(COVERPROFILE)" ./...
+	$(GO) tool cover -func="$(COVERPROFILE)"
+	@awk 'NR > 1 { size[$$1] = $$2; if ($$3) hit[$$1] = 1 } \
+		END { for (b in size) { total += size[b]; covered += size[b] * hit[b] } \
+		if (!total || 100 * covered < 90 * total) { print "Statement coverage below 90%"; exit 1 } }' "$(COVERPROFILE)"
 
-.PHONY: help
-## Show this help message
-help:
-	@echo "$$(tput bold)Available rules:$$(tput sgr0)"
-	@echo
-	@sed -n -e "/^## / { \
-		h; \
-		s/.*//; \
-		:doc" \
-		-e "H; \
-		n; \
-		s/^## //; \
-		t doc" \
-		-e "s/:.*//; \
-		G; \
-		s/\\n## /---/; \
-		s/\\n/ /g; \
-		p; \
-	}" ${MAKEFILE_LIST} \
-	| LC_ALL='C' sort --ignore-case \
-	| awk -F '---' \
-		-v ncol=$$(tput cols) \
-		-v indent=19 \
-		-v col_on="$$(tput setaf 6)" \
-		-v col_off="$$(tput sgr0)" \
-	'{ \
-		printf "%s%*s%s ", col_on, -indent, $$1, col_off; \
-		n = split($$2, words, " "); \
-		line_length = ncol - indent; \
-		for (i = 1; i <= n; i++) { \
-			line_length -= length(words[i]) + 1; \
-			if (line_length <= 0) { \
-				line_length = ncol - indent - length(words[i]) - 1; \
-				printf "\n%*s ", -indent, " "; \
-			} \
-			printf "%s ", words[i]; \
-		} \
-		printf "\n"; \
-	}' \
-	| more $(shell test $(shell uname) == Darwin && echo '--no-init --raw-control-chars')
+lint: ## Run golangci-lint on all packages
+	$(GOLANGCI_LINT) run $(GOLANGCI_LINT_FLAGS) ./...
 
+lint-fix: ## Apply fixes offered by golangci-lint
+	$(GOLANGCI_LINT) run --fix $(GOLANGCI_LINT_FLAGS) ./...
+
+govulncheck: ## Scan dependencies for known vulnerabilities
+	$(GOVULNCHECK) ./...
+
+ci: vet lint test-race ## Run local pre-push checks
+
+ci-full: ci govulncheck ## Also scan for known vulnerabilities
+
+clean: ## Remove build artifacts and the coverage profile
+	rm -rf -- "$(DIST_DIR)"
+	rm -f -- "$(COVERPROFILE)"
+
+.PHONY: help run build install tidy fmt vet test test-race lint lint-fix \
+        govulncheck ci ci-full clean
