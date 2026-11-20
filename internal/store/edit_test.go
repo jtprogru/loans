@@ -96,6 +96,21 @@ func TestStoreReportsPathAndValidationErrors(t *testing.T) {
 			t.Fatal("saved invalid transfer")
 		}
 	}
+	link := filepath.Join(dir, "alias")
+	if err := os.Link(db.path, link); err != nil {
+		t.Skipf("hard links unavailable: %v", err)
+	}
+	for _, path := range []string{link, dir, filepath.Join(file, "out.json")} {
+		if err := db.Export(ctx, path); err == nil {
+			t.Fatalf("export to %s succeeded", path)
+		}
+	}
+	if err := db.Import(ctx, db.path, today, true); err == nil {
+		t.Fatal("imported database as backup")
+	}
+	if err := db.Import(ctx, filepath.Join(dir, "missing"), today, true); !errors.Is(err, os.ErrNotExist) {
+		t.Fatal(err)
+	}
 	cancelled, cancel := context.WithCancel(ctx)
 	cancel()
 	d := get(t, db).Debtors[0]

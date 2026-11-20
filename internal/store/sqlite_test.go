@@ -3,6 +3,7 @@ package store
 import (
 	"context"
 	"errors"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -134,6 +135,90 @@ func TestConcurrentPaymentValidation(t *testing.T) {
 	}
 	if ok != 1 || len(get(t, first).Payments) != 1 {
 		t.Fatalf("expected exactly one accepted payment, got %d", ok)
+	}
+}
+
+func TestBackupRoundTripAndRejectInvalidCopies(t *testing.T) {
+	ctx := t.Context()
+	dir := t.TempDir()
+	path := filepath.Join(dir, "loans-backup.json")
+	src := openDB(t, filepath.Join(dir, "source ?.sqlite3"))
+	id := addLoan(t, src, "365000", ledger.ExplicitKey, "")
+	for _, k := range []ledger.KeyRate{
+		{Date: "2025-01-02", Rate: "10", Source: "условный тест"},
+		{Date: "2025-01-03", Rate: "12", Source: "условный тест"},
+	} {
+		if err := src.SetRate(ctx, k); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := src.SetCoverage(ctx, ledger.Coverage{From: "2025-01-02", Through: "2025-01-03"}); err != nil {
+		t.Fatal(err)
+	}
+	paymentID := pay(t, src, id, "2025-01-03", 100000)
+	if err := src.Export(ctx, path); err != nil {
+		t.Fatal(err)
+	}
+	if err := src.Export(ctx, src.path); err == nil {
+		t.Fatal("export can overwrite the current database")
+	}
+	dst := openDB(t, filepath.Join(dir, "target.sqlite3"))
+	if err := dst.Import(ctx, path, today, false); err != nil {
+		t.Fatal(err)
+	}
+	want := get(t, src)
+	if after := get(t, dst); !reflect.DeepEqual(want, after) {
+		t.Fatalf("restored %+v, want %+v", after, want)
+	}
+	for _, date := range []string{"2025-01-01", "2025-01-02", "2025-01-03"} {
+		want := balanceAt(t, ctx, src, id, date)
+		got := balanceAt(t, ctx, dst, id, date)
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("%s: restored %+v, want %+v", date, got, want)
+		}
+	}
+	if err := dst.Import(ctx, path, today, false); err == nil {
+		t.Fatal("nonempty database replaced without flag")
+	}
+	valid, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	cancelled, cancel := context.WithCancel(ctx)
+	cancel()
+	if err := src.Export(cancelled, path); err == nil {
+		t.Fatal("export ignored the cancelled context")
+	}
+	stillValid, err := os.ReadFile(path)
+	if err != nil || string(stillValid) != string(valid) {
+		t.Fatalf("failed export modified the existing backup: %v", err)
+	}
+	for _, input := range []string{
+		"{", string(valid) + "{}", strings.Replace(string(valid), `"version": 1`, `"version": 99`, 1),
+		strings.Replace(string(valid), `"debtor_id": 1`, `"debtor_id": 99`, 1),
+		strings.Replace(string(valid), `"amount_kopecks": 100000`, `"amount_kopecks": 999999999`, 1),
+		strings.Replace(string(valid), `"through": "2025-01-03"`, `"through": "2025-01-02"`, 1),
+	} {
+		bad := filepath.Join(dir, "bad.json")
+		if err := os.WriteFile(bad, []byte(input), 0600); err != nil {
+			t.Fatal(err)
+		}
+		if err := dst.Import(ctx, bad, today, true); err == nil {
+			t.Fatalf("invalid backup accepted: %q", input)
+		}
+		if after := get(t, dst); !reflect.DeepEqual(want, after) {
+			t.Fatalf("invalid import changed DB: %+v", after)
+		}
+	}
+	newID := addLoan(t, dst, "1000", "0", "")
+	if newID <= id || pay(t, dst, newID, "2025-01-03", 1000) <= paymentID {
+		t.Fatal("new IDs conflict with restored IDs")
+	}
+	if err := dst.Import(ctx, path, today, true); err != nil {
+		t.Fatal(err)
+	}
+	if after := get(t, dst); !reflect.DeepEqual(want, after) {
+		t.Fatalf("replace did not restore exactly: %+v", after)
 	}
 }
 
