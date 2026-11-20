@@ -1,20 +1,27 @@
 package main
 
 import (
+	"context"
 	"fmt"
+	"io"
 	"os"
+	"os/signal"
+	"syscall"
 
-	"github.com/jtprogru/loans/storage"
+	"github.com/jtprogru/loans/internal/cli"
 )
 
-func main() {
-	storageType := os.Getenv("STORAGE_TYPE")
+var version = "dev"
 
-	store, err := storage.NewStorage(storageType)
+func main() { os.Exit(run(os.Args[1:], os.Stdin, os.Stdout, os.Stderr)) }
+
+func run(args []string, in io.Reader, out, stderr io.Writer) int {
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer cancel()
+	err := cli.Execute(ctx, args, in, out, stderr, version)
 	if err != nil {
-		fmt.Println("Error creating storage:", err)
-		os.Exit(1)
+		_, _ = fmt.Fprintln(stderr, "Ошибка:", err) // Best effort: the command already failed.
+		return 1
 	}
-
-	_ = store
+	return 0
 }
